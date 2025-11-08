@@ -38,19 +38,7 @@ resources:
     cpu: 100m
     memory: 128Mi
 
-livenessProbe:
-  # 使用TCP检查确保能连接到容器端口
-  tcpSocket:
-    port: http
-  initialDelaySeconds: 30
-  periodSeconds: 10
 
-readinessProbe:
-  # 使用TCP检查确保能连接到容器端口
-  tcpSocket:
-    port: http
-  initialDelaySeconds: 5
-  periodSeconds: 5
 
 autoscaling:
   enabled: false
