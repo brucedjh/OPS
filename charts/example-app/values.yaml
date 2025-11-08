@@ -39,14 +39,14 @@ resources:
     memory: 128Mi
 
 livenessProbe:
-  # 应用没有提供/health端点，使用TCP检查或暂时禁用
+  # 使用TCP检查确保能连接到容器端口
   tcpSocket:
     port: http
   initialDelaySeconds: 30
   periodSeconds: 10
 
 readinessProbe:
-  # 应用没有提供/health端点，使用TCP检查或暂时禁用
+  # 使用TCP检查确保能连接到容器端口
   tcpSocket:
     port: http
   initialDelaySeconds: 5
@@ -71,7 +71,8 @@ affinity:
 service:
   # 对于本地K8S环境，使用ClusterIP类型配合port-forward是最简单的方式
   type: ClusterIP
-  port: 3000
+  port: 80
+  targetPort: 3000  # 容器内部端口是3000
   # 本地环境可添加以下注解用于调试
   # annotations:
   #   prometheus.io/scrape: "true"
