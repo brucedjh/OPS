@@ -32,7 +32,7 @@ spec:
     # K8s集群URL（使用默认集群时为in-cluster）
     server: https://kubernetes.default.svc
     # 部署的命名空间
-    namespace: example-namespace
+    namespace: default
   syncPolicy:
     # 启用自动同步
     automated:

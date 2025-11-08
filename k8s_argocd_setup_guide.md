@@ -17,6 +17,35 @@ kubectl get nodes
 kubectl version
 ```
 
+## 解决集群添加时的权限错误
+
+当添加集群到ArgoCD时，如果遇到以下错误：
+
+```
+failed to update ClusterRoleBinding "argocd-manager-role-binding": ClusterRoleBinding.rbac.authorization.k8s.io "argocd-manager-role-binding" is invalid: roleRef: cannot change roleRef
+```
+
+这表示相关的ClusterRoleBinding已经存在。有两种解决方法：
+
+### 方法1：删除已存在的ClusterRoleBinding后重新添加
+
+```bash
+# 删除已存在的ClusterRoleBinding
+kubectl delete clusterrolebinding argocd-manager-role-binding
+
+# 重新添加集群
+argocd cluster add kubernetes-admin@kubernetes --kubeconfig ~/.kube/config --name my-k8s-cluster
+```
+
+### 方法2：检查集群是否已经成功添加
+
+```bash
+# 查看已添加的集群
+argocd cluster list
+
+# 如果集群已经在列表中，可以直接使用，无需重新添加
+```
+
 ### 1.2 配置kubectl访问权限
 
 确保你有集群的管理员访问权限(kubeconfig文件)，这对于后续操作至关重要。
@@ -120,7 +149,9 @@ SERVER=$(kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[0]
 argocd cluster add kube-system/argocd-manager --name my-k8s-cluster
 
 # 或者使用令牌和CA证书手动添加
-argocd cluster add --kubeconfig ~/.kube/config --name my-k8s-cluster
+argocd cluster add kubernetes-admin@kubernetes --kubeconfig ~/.kube/config --name my-k8s-cluster
+
+**说明：** 从错误信息可以看到，需要明确指定上下文名称(context name)。在这个例子中，上下文名称是`kubernetes-admin@kubernetes`，这是从kubectl配置中获取的。
 ```
 
 ### 4.2 通过UI添加集群
@@ -142,11 +173,18 @@ argocd cluster add --kubeconfig ~/.kube/config --name my-k8s-cluster
 ```bash
 # 创建镜像拉取密钥
 kubectl create secret docker-registry aliyun-acr-credentials \
-  --docker-server=crpi-dndp9yqzsi910o27.cn-hongkong.personal.cr.aliyuncs.com \
-  --docker-username=你的ACR用户名 \
-  --docker-password=你的ACR密码 \
-  --docker-email=your-email@example.com \
-  -n example-namespace
+    --docker-server=crpi-dndp9yqzsi910o27.cn-hongkong.personal.cr.aliyuncs.com \
+    --docker-username=你的ACR用户名 \
+    --docker-password=你的ACR密码 \
+    --docker-email=your-email@example.com \
+    -n default
+
+**说明：** 我们使用 `default` 命名空间作为应用部署的目标命名空间。default命名空间是Kubernetes集群默认存在的命名空间，无需创建。
+
+如果你需要修改部署到其他命名空间，请同时更新：
+1. 此处的 `-n` 参数
+2. ArgoCD 应用配置文件中的 `spec.destination.namespace` 字段
+3. 对于非默认命名空间，确保 `syncOptions` 中包含 `CreateNamespace=true` 以自动创建命名空间（如果不存在）
 ```
 
 ### 5.2 配置ArgoCD使用镜像凭证
@@ -180,7 +218,7 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: test-pod
-  namespace: example-namespace
+  namespace: default
 spec:
   containers:
   - name: test-container
