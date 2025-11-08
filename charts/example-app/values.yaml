@@ -68,11 +68,16 @@ tolerations:
 affinity:
   {}  # 可以添加亲和性配置
 
+# 容器配置
+container:
+  port: 3000  # 容器内部实际监听的端口
+
+# 服务配置
 service:
   # 对于本地K8S环境，使用ClusterIP类型配合port-forward是最简单的方式
   type: ClusterIP
-  port: 80
-  targetPort: 3000  # 容器内部端口是3000
+  port: 80  # 服务暴露的端口
+  targetPort: http  # 指向容器端口名称
   # 本地环境可添加以下注解用于调试
   # annotations:
   #   prometheus.io/scrape: "true"
