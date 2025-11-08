@@ -53,10 +53,10 @@ kubectl create secret docker-registry aliyun-acr-credentials \
   --docker-username=你的用户名 \
   --docker-password=你的密码 \
   --docker-email=your-email@example.com \
-  -n example-namespace
+  -n default
 ```
 
-### 2. 本地K8S环境使用说明
+### 2. 本地Helm部署
 
 #### 使用Port-Forward访问应用
 
@@ -64,13 +64,13 @@ kubectl create secret docker-registry aliyun-acr-credentials \
 
 1. **部署应用**：
    ```bash
-   helm install example-app ./charts/example-app -n example-namespace --create-namespace
+   helm install cloudflare-app ./charts/example-app -n default
    ```
 
 2. **使用port-forward访问**：
    ```bash
    # 将本地8080端口转发到服务的80端口
-   kubectl port-forward svc/example-app -n example-namespace 8080:80
+   kubectl port-forward svc/cloudflare-app -n default 8080:80
    ```
 
 3. **访问应用**：
@@ -80,32 +80,88 @@ kubectl create secret docker-registry aliyun-acr-credentials \
 
 ```bash
 # 查看Pod状态
-kubectl get pods -n example-namespace
+kubectl get pods -n default
 
 # 查看服务状态
-kubectl get svc -n example-namespace
+kubectl get svc -n default
 
 # 查看Pod日志
-kubectl logs -f deployment/example-app -n example-namespace
+kubectl logs -f deployment/cloudflare-app -n default
 ```
 
-### 2. ArgoCD配置
+### 3. ArgoCD配置与部署
 
 #### 修改Application定义
 
 编辑 `argocd/example-app-application.yaml` 文件：
 
-- **仓库地址**：修改 `repoURL` 为你的GitHub仓库地址
-- **命名空间**：修改 `destination.namespace` 为你希望部署应用的Kubernetes命名空间
-- **参数配置**：根据需要调整其他参数
+- **仓库地址**：修改 `repoURL` 为 `https://github.com/brucedjh/OPS.git`
+- **集群地址**：修改 `destination.server` 为 `https://192.168.2.41:6443`
+- **命名空间**：确保 `destination.namespace` 设置为 `default`
+- **应用名称**：确保元数据中的 `name` 为 `cloudflare-app`
+- **健康检查**：确保 `healthChecks` 中配置了正确的应用名称和命名空间
 
-#### 应用ArgoCD配置
+#### 方法一：通过kubectl应用配置文件
 
 将Application配置应用到ArgoCD：
 
 ```bash
 kubectl apply -f argocd/example-app-application.yaml
 ```
+
+#### 方法二：通过ArgoCD CLI创建应用
+
+##### 1. 添加Git仓库认证
+
+**安全注意**：为了避免在命令历史中暴露令牌，请使用环境变量或从安全文件读取：
+
+```bash
+# 方法1：使用环境变量（推荐）
+export GITHUB_TOKEN="your-github-token-here"
+argocd repo add https://github.com/brucedjh/OPS.git --username your-username --password $GITHUB_TOKEN
+
+# 方法2：交互式输入（更安全，但无法自动化）
+argocd repo add https://github.com/brucedjh/OPS.git
+# 提示输入时再输入凭据
+```
+
+##### 2. 创建ArgoCD应用
+
+```bash
+argocd app create cloudflare-app \
+  --repo https://github.com/brucedjh/OPS.git \
+  --path charts/example-app \
+  --dest-server https://192.168.2.41:6443 \
+  --dest-namespace default \
+  --sync-policy automated
+```
+
+#### 验证部署状态
+
+```bash
+# 使用ArgoCD CLI查看应用状态
+argocd app get cloudflare-app
+
+# 查看Pod状态
+kubectl get pods -n default
+
+# 查看服务状态
+kubectl get svc -n default
+
+# 查看Pod日志
+kubectl logs -f deployment/cloudflare-app -n default
+```
+
+#### 访问应用
+
+如果需要通过Port-Forward访问应用：
+
+```bash
+# 将本地8080端口转发到服务的80端口
+kubectl port-forward svc/cloudflare-app -n default 8080:80
+```
+
+然后在浏览器中访问 `http://localhost:8080`
 
 ### 3. GitHub Actions集成
 
@@ -176,11 +232,31 @@ jobs:
 
 5. **GitOps工作流**：所有配置变更通过Git提交管理，利用ArgoCD自动同步到集群
 
-## 故障排查
+##### 故障排查
 
-1. **镜像拉取失败**：检查镜像地址、标签和拉取密钥是否正确
-2. **部署失败**：查看Pod事件和日志，确认资源是否足够、配置是否正确
-3. **ArgoCD同步失败**：检查Git仓库权限、网络连接和配置格式
+#### 镜像拉取失败
+- 检查镜像地址、标签和拉取密钥是否正确
+- 确认镜像是否存在
+- 查看Kubernetes节点是否能访问镜像仓库网络
+
+#### 健康检查失败（Pod状态为0/1）
+- **原因分析**：Pod事件日志显示健康检查连接被拒绝（"connection refused"）
+- **当前配置**：已将健康检查修改为直接检查3000端口（TCP socket检查），这是一种更直接的端口可用性验证方式
+- **调整说明**：
+  - 使用TCP socket检查替代HTTP GET检查，减少应用层依赖
+  - 增加了初始延迟时间，给应用更多启动时间
+  - 降低了探测频率，减轻对应用的压力
+- **操作步骤**：修改values.yaml中的健康检查配置后，重新应用部署
+
+#### 部署失败
+- 查看Pod事件和日志，确认资源是否足够、配置是否正确
+- 检查Pod状态和日志：`kubectl logs -f <pod-name>`
+- 查看详细的事件信息：`kubectl describe pod <pod-name>`
+
+#### ArgoCD同步失败
+- 检查Git仓库权限、网络连接和配置格式
+- 查看ArgoCD UI中的错误详情
+- 确认目标集群访问配置是否正常
 
 ## 维护
 
