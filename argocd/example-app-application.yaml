@@ -9,8 +9,8 @@ metadata:
 spec:
   project: default
   source:
-    # Git仓库地址 - 请替换为实际使用的仓库
-    repoURL: https://github.com/your-org/ops-repo.git
+    # Git仓库地址
+    repoURL: https://github.com/brucedjh/OPS.git
     # Git分支
     targetRevision: main
     # Helm chart路径
