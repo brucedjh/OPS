@@ -1,0 +1,92 @@
+# Default values for example-app.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 2
+
+image:
+  repository: crpi-dndp9yqzsi910o27.cn-hongkong.personal.cr.aliyuncs.com/ns_jadebruce/cloudflare
+  pullPolicy: Always
+  tag: "latest"  # 会被GitHub Actions传入的实际tag替换
+
+imagePullSecrets:
+  - name: aliyun-acr-credentials  # 需在K8S集群中提前创建的secret名称
+
+nameOverride: ""
+fullnameOverride: ""
+
+podAnnotations:
+  {}  # 可以添加自定义注解
+
+serviceAccount:
+  # 是否自动创建serviceAccount
+  create: true
+  # 指定serviceAccount名称
+  name: ""
+
+podSecurityContext:
+  fsGroup: 2000
+
+securityContext:
+  {}  # 可以添加安全上下文配置
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 30
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 5
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+nodeSelector:
+  {}  # 可以添加节点选择器
+
+tolerations:
+  []  # 可以添加污点容忍
+
+affinity:
+  {}  # 可以添加亲和性配置
+
+service:
+  # 对于本地K8S环境，使用ClusterIP类型配合port-forward是最简单的方式
+  type: ClusterIP
+  port: 80
+  # 本地环境可添加以下注解用于调试
+  # annotations:
+  #   prometheus.io/scrape: "true"
+  #   prometheus.io/port: "80"
+  #   prometheus.io/path: "/metrics"
+
+ingress:
+  enabled: false
+  className: ""
+  annotations:
+    {}  # 可以添加ingress注解
+  hosts:
+    - host: chart-example.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    []  # 可以添加TLS配置

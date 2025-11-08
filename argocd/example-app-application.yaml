@@ -1,0 +1,63 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: example-app
+  namespace: argocd
+  # 添加最终一致性相关注解
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    # Git仓库地址 - 请替换为实际使用的仓库
+    repoURL: https://github.com/your-org/ops-repo.git
+    # Git分支
+    targetRevision: main
+    # Helm chart路径
+    path: charts/example-app
+    # Helm参数
+    helm:
+      # 值文件路径 - 可以根据环境选择不同的值文件
+      valueFiles:
+        - values.yaml
+        # 如需使用生产环境配置，取消下面一行的注释
+        # - values-prod.yaml
+      # 覆盖的参数
+      parameters:
+        - name: image.tag
+          value: "latest"  # 使用最新标签
+        - name: replicaCount
+          value: "2"  # 副本数
+  destination:
+    # K8s集群URL（使用默认集群时为in-cluster）
+    server: https://kubernetes.default.svc
+    # 部署的命名空间
+    namespace: example-namespace
+  syncPolicy:
+    # 启用自动同步
+    automated:
+      # 启用自动删除资源
+      prune: true
+      # 允许命名空间创建
+      selfHeal: true
+      # 启用自动同步
+      allowEmpty: false
+    # 同步策略配置
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      - Validate=true
+      - ServerSideApply=true
+    # 健康检查配置
+    healthChecks:
+      - kind: Deployment
+        name: example-app
+        namespace: example-namespace
+    # 重试策略
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
