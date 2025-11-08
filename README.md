@@ -91,6 +91,54 @@ kubectl logs -f deployment/cloudflare-app -n default
 
 ### 3. ArgoCD配置与部署
 
+#### 修改配置后重新发布
+
+当你修改了`values.yaml`或其他Helm Chart配置文件后，可以通过以下方式重新发布应用：
+
+##### 方式一：使用自动同步（推荐）
+
+当前ArgoCD应用配置已启用自动同步功能，步骤如下：
+
+1. **提交更改到Git仓库**：
+   ```bash
+   git add charts/example-app/values.yaml
+   git commit -m "更新应用配置"
+   git push origin HEAD:master
+   ```
+
+2. **等待自动同步**：
+   - ArgoCD会定期检测Git仓库变更（默认3分钟一次）
+   - 检测到变更后会自动同步到集群
+   - 配置了`selfHeal: true`，确保集群状态与Git保持一致
+
+##### 方式二：手动触发同步
+
+如果需要立即应用更改，可以手动触发同步：
+
+```bash
+# 使用ArgoCD CLI手动同步
+argocd app sync cloudflare-app
+
+# 或者使用kubectl强制同步（不推荐，除非CLI不可用）
+kubectl patch app cloudflare-app -n argocd -p '{"spec":{"syncPolicy":{"syncOptions":["Force=true"]}}}' --type merge
+```
+
+##### 验证部署状态
+
+```bash
+# 查看ArgoCD应用同步状态
+argocd app get cloudflare-app
+
+# 查看部署状态
+kubectl get deployment cloudflare-app -n default
+
+# 查看Pod状态
+kubectl get pods -n default
+
+# 查看Pod日志
+kubectl logs -f deployment/cloudflare-app -n default
+```
+
 #### 修改Application定义
 
 编辑 `argocd/example-app-application.yaml` 文件：
