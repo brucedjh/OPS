@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: example-app
+  name: cloudflare-app
   namespace: argocd
   # 添加最终一致性相关注解
   finalizers:
@@ -29,8 +29,8 @@ spec:
         - name: replicaCount
           value: "2"  # 副本数
   destination:
-    # K8s集群URL（使用默认集群时为in-cluster）
-    server: https://kubernetes.default.svc
+    # K8s集群URL（使用指定集群）
+    server: https://192.168.2.41:6443
     # 部署的命名空间
     namespace: default
   syncPolicy:
@@ -44,16 +44,15 @@ spec:
       allowEmpty: false
     # 同步策略配置
     syncOptions:
-      - CreateNamespace=true
       - PrunePropagationPolicy=foreground
       - PruneLast=true
       - Validate=true
       - ServerSideApply=true
-    # 健康检查配置
+      # 当使用default命名空间时，不需要CreateNamespace=true选项，因为默认命名空间已经存在
     healthChecks:
       - kind: Deployment
-        name: example-app
-        namespace: example-namespace
+        name: cloudflare-app
+        namespace: default
     # 重试策略
     retry:
       limit: 5
