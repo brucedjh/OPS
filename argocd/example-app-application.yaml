@@ -12,7 +12,7 @@ spec:
     # Git仓库地址
     repoURL: https://github.com/brucedjh/OPS.git
     # Git分支
-    targetRevision: main
+    targetRevision: master
     # Helm chart路径
     path: charts/example-app
     # Helm参数
