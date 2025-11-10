@@ -22,7 +22,12 @@ serviceAccount:
   # 是否自动创建serviceAccount
   create: true
   # 指定serviceAccount名称
-  name: ""
+  # 注意：如果通过deploy-local.sh脚本部署，此值会被覆盖为${APP_NAME}-sa
+  # 确保此名称与Vault中bound_service_account_names配置匹配
+  name: "cloudflare-app-example-app"
+  # 添加annotations以确保正确的权限
+  annotations:
+    "vault.hashicorp.com/agent-inject": "false"
 
 podSecurityContext:
   fsGroup: 2000
@@ -59,6 +64,168 @@ affinity:
 # 容器配置
 container:
   port: 3000  # 容器内部实际监听的端口
+
+# 初始化容器配置
+initContainers:
+  # Vault就绪检查容器
+  - name: vault-readiness-check
+    image: busybox:1.35
+    command:
+      - sh
+      - -c
+      - |
+        # 设置重试参数
+        MAX_RETRIES=30
+        RETRY_INTERVAL=5
+        
+        # 获取Vault地址
+        VAULT_ADDR="http://192.168.2.50:8200"
+        echo "开始检查Vault服务状态: $VAULT_ADDR"
+        
+        # 循环检查Vault健康状态
+        for i in $(seq 1 $MAX_RETRIES); do
+          echo "尝试 $i/$MAX_RETRIES 次: 检查Vault连接..."
+          # 使用wget检查Vault健康端点
+          if wget -q --timeout=2 $VAULT_ADDR/v1/sys/health -O /dev/null; then
+            echo "✓ Vault服务可用!"
+            exit 0
+          fi
+          echo "Vault暂时不可用，${RETRY_INTERVAL}秒后重试..."
+          sleep $RETRY_INTERVAL
+        done
+        
+        # 如果达到最大重试次数
+        echo "❌ 达到最大重试次数，Vault服务不可用!"
+        echo "注意: 应用将继续启动，但可能无法从Vault获取配置"
+        exit 0  # 返回成功，让应用容器继续启动
+
+# 健康检查配置已注释，根据需求暂时禁用
+#livenessProbe:
+#  httpGet:
+#    path: /health
+#    port: 3000
+#  initialDelaySeconds: 120  # 进一步增加初始延迟，给Vault认证更多时间
+#  periodSeconds: 20        # 降低检查频率，减少资源消耗
+#  timeoutSeconds: 10       # 设置更长的超时时间
+#  failureThreshold: 5      # 增加失败阈值，避免因临时问题导致重启
+
+#readinessProbe:
+#  httpGet:
+#    path: /health
+#    port: 3000
+#  initialDelaySeconds: 30   # 就绪探针也增加延迟
+#  periodSeconds: 10
+#  timeoutSeconds: 5
+#  failureThreshold: 3
+
+# 环境变量配置
+env:
+  # 基本配置
+  - name: NODE_ENV
+    value: "production"
+  - name: PORT
+    value: "3000"
+  - name: USE_VAULT
+    value: "true"
+  
+  # Vault连接配置
+  - name: VAULT_ADDR
+    value: "http://192.168.2.50:8200"  # Vault服务器地址（实际使用地址）
+  # Vault认证配置 - 在Kubernetes环境中必须使用kubernetes认证
+  - name: VAULT_AUTH_METHOD
+    value: "kubernetes"  # 强制使用kubernetes认证方式
+  - name: VAULT_K8S_ROLE
+    value: "cloudflare-app-role"  # Kubernetes认证时的角色
+  - name: VAULT_K8S_NAMESPACE
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.namespace
+  # 添加调试信息
+  - name: DEBUG
+    value: "true"
+  - name: VAULT_DEBUG
+    value: "true"
+  - name: VAULT_LOG_LEVEL
+    value: "debug"
+  # 启用Vault权限错误时跳过认证，使用fallback配置
+  - name: VAULT_SKIP_ON_PERMISSION_ERROR
+    value: "true"
+  - name: NODE_TLS_REJECT_UNAUTHORIZED
+    value: "0"
+  # 添加Kubernetes认证所需的额外配置
+  - name: VAULT_K8S_MOUNT_PATH
+    value: "kubernetes"
+  - name: VAULT_K8S_TOKEN_PATH
+    value: "/var/run/secrets/kubernetes.io/serviceaccount/token"
+  # 增加重试配置
+  - name: VAULT_RETRY_ATTEMPTS
+    value: "5"
+  - name: VAULT_RETRY_INTERVAL_MS
+    value: "2000"
+  # 可选：Token认证方式（如果VAULT_AUTH_METHOD设置为token时使用）
+  # - name: VAULT_TOKEN
+  #   valueFrom:
+  #     secretKeyRef:
+  #       name: vault-token-secret
+  #       key: token
+  # Vault路径配置
+  - name: VAULT_DEFAULT_PATH
+    value: "secret/data/cloudflare"
+  - name: VAULT_MY_EMAIL_PATH
+    value: "secret/data/MY_CLOUDFLARE_EMAIL"
+  - name: VAULT_MY_API_KEY_PATH
+    value: "secret/data/MY_CLOUDFLARE_API_KEY"
+  
+  # Cloudflare配置 - 从secret中获取，同时提供fallback机制
+  # 这些配置将作为备用，当Vault不可用时使用
+  - name: CLOUDFLARE_EMAIL
+    valueFrom:
+      secretKeyRef:
+        name: cloudflare-app-secrets
+        key: cloudflare-email
+        optional: true
+  - name: CLOUDFLARE_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: cloudflare-app-secrets
+        key: cloudflare-api-key
+        optional: true
+  
+  # 会话配置
+  - name: SESSION_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: cloudflare-app-secrets
+        key: session-secret
+        optional: true
+
+# Vault Sidecar Injector 配置
+# 是否启用Vault Sidecar Injector
+enableVaultInjector: true
+
+# 指定SecretProviderClass名称
+secretProviderClass: cloudflare-vault-provider
+
+# Vault服务器地址
+vaultAddress: "http://192.168.2.50:8200"
+
+# Vault Kubernetes认证角色
+vaultK8sRole: "cloudflare-app-role"
+
+# 是否使用文件系统凭证模式
+useFileSystemCredentials: true
+
+# 凭证目录路径
+vaultCredentialDir: /apps/credential
+
+# 配置生命周期钩子，优雅关闭
+lifecycle:
+  preStop:
+    exec:
+      command: ["sh", "-c", "sleep 10"]  # 给应用10秒的优雅关闭时间
+
+# 配置Pod行为
+terminationGracePeriodSeconds: 30
 
 # 服务配置
 service:
