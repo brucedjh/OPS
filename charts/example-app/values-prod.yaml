@@ -59,6 +59,28 @@ ingress:
 nodeSelector:
   environment: production
 
+# 覆盖环境变量配置，生产环境禁用debug模式
+env:
+  - name: DEBUG
+    value: "false"
+  - name: VAULT_DEBUG
+    value: "false"
+  - name: VAULT_LOG_LEVEL
+    value: "info"
+  # 启用Vault权限错误时跳过认证，使用fallback配置
+  - name: VAULT_SKIP_ON_PERMISSION_ERROR
+    value: "true"
+
+# Vault Sidecar Injector 配置 - 生产环境
+enableVaultInjector: true
+secretProviderClass: cloudflare-vault-provider
+useFileSystemCredentials: true
+vaultCredentialDir: /apps/credential
+
+# 明确禁用健康检查配置
+livenessProbe: {}
+readinessProbe: {}
+
 affinity:
   podAntiAffinity:
     preferredDuringSchedulingIgnoredDuringExecution:

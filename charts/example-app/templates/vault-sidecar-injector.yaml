@@ -1,0 +1,15 @@
+{{/*
+Vault Sidecar Injector 配置（Helm模板版本）
+
+注意：此文件已移至Helm Chart中，但考虑到secrets-provider-class.yaml和deployment.yaml
+已包含主要的Vault集成配置，此文件被简化为注释形式以避免资源冲突。
+
+主要Vault集成配置已在以下文件中实现：
+1. templates/secrets-provider-class.yaml - 提供完整的SecretProviderClass资源定义
+2. templates/deployment.yaml - 包含必要的Pod注解、卷挂载和环境变量配置
+*/}}
+
+{{- if .Values.enableVaultSidecarInjector | default false }}
+# 仅在明确启用时才创建额外的Vault配置
+# 通常不需要启用，因为核心功能已在其他文件中实现
+{{ end }}

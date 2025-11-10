@@ -1,0 +1,26 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cloudflare-app-role
+  namespace: default
+rules:
+- apiGroups: [""]
+  resources: ["serviceaccounts/token"]
+  verbs: ["create"]
+- apiGroups: ["authentication.k8s.io"]
+  resources: ["tokenreviews"]
+  verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vault-auth-rolebinding
+  namespace: default
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cloudflare-app-role
+subjects:
+- kind: ServiceAccount
+  name: cloudflare-app-example-app
+  namespace: default

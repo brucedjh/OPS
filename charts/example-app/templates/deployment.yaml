@@ -17,6 +17,11 @@ spec:
       annotations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      # 启用Vault CSI Secret Store注入
+      annotations:
+        secrets-store.csi.k8s.io/enabled: "{{ .Values.enableVaultInjector | default "true" }}"
+        # 指定使用哪个SecretProviderClass
+        secrets-store.csi.k8s.io/secret-provider-class: "{{ .Values.secretProviderClass | default "cloudflare-vault-provider" }}"
       labels:
         {{- include "example-app.selectorLabels" . | nindent 8 }}
     spec:
@@ -24,9 +29,14 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      serviceAccountName: {{ include "example-app.serviceAccountName" . }}
+      serviceAccountName: {{ default (include "example-app.fullname" .) .Values.serviceAccount.name }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      # 添加初始化容器配置
+      {{- with .Values.initContainers }}
+      initContainers:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: {{ .Chart.Name }}
           securityContext:
@@ -43,10 +53,41 @@ spec:
             {{- toYaml .Values.readinessProbe | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-          {{- with .Values.env }}
           env:
+            # 添加文件系统凭证模式支持
+            - name: USE_FILESYSTEM_CREDENTIALS
+              value: {{ .Values.useFileSystemCredentials | default "true" | quote }}
+            - name: VAULT_CREDENTIAL_DIR
+              value: {{ .Values.vaultCredentialDir | default "/apps/credential" | quote }}
+            {{- with .Values.env }}
             {{- toYaml . | nindent 12 }}
-          {{- end }}
+            {{- end }}
+          # 挂载服务账户令牌用于Vault认证
+          volumeMounts:
+            - name: token-volume
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+            # 挂载Vault凭证卷
+            - name: vault-secrets
+              mountPath: "{{ .Values.vaultCredentialDir | default "/apps/credential" }}"
+              readOnly: true
+          # 生命周期钩子配置已移除，避免nil指针错误
+      # 定义卷
+      volumes:
+        - name: vault-secrets
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: "{{ .Values.secretProviderClass | default "cloudflare-vault-provider" }}"
+        - name: token-volume
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 7200
+                  audience: vault
+      
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
