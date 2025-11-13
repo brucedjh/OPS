@@ -5,12 +5,12 @@
 replicaCount: 3
 
 image:
-  repository: <aws-account-id>.dkr.ecr.<aws-region>.amazonaws.com/cloudflare-app
+  repository: crpi-dndp9yqzsi910o27.cn-hongkong.personal.cr.aliyuncs.com/ns_jadebruce/cloudflare
   tag: "latest"  # 会被GitHub Actions传入的实际tag替换
   pullPolicy: Always
 
 imagePullSecrets:
-  - name: aws-ecr-credentials  # EKS中用于访问ECR的secret名称
+  - name: aliyun-acr-credentials  # 需在K8S集群中提前创建的secret名称
 
 nameOverride: ""
 fullnameOverride: ""
@@ -22,10 +22,12 @@ serviceAccount:
   # 是否自动创建serviceAccount
   create: true
   # 指定serviceAccount名称
+  # 注意：如果通过deploy-local.sh脚本部署，此值会被覆盖为${APP_NAME}-sa
+  # 确保此名称与Vault中bound_service_account_names配置匹配
   name: "cloudflare-app-example-app"
-  # 添加IAM角色注解用于IRSA集成
+  # 添加annotations以确保正确的权限
   annotations:
-    eks.amazonaws.com/role-arn: "arn:aws:iam::<aws-account-id>:role/eks-cloudflare-app-role"  # EKS IAM角色ARN
+    "vault.hashicorp.com/agent-inject": "false"
 
 podSecurityContext:
   fsGroup: 2000
@@ -35,10 +37,10 @@ securityContext:
 
 resources:
   limits:
-    cpu: 1000m
+    cpu: 1000m  # EKS环境推荐更高的资源限制
     memory: 1Gi
   requests:
-    cpu: 500m
+    cpu: 500m   # EKS环境推荐更高的资源请求
     memory: 512Mi
 
 
@@ -59,17 +61,13 @@ nodeSelector:
 
 tolerations:
   # EKS专用污点容忍
-  - key: "kubernetes.azure.com/scalesetpriority"
-    operator: "Equal"
-    value: "spot"
-    effect: "NoSchedule"
   - key: "eks.amazonaws.com/compute-type"
     operator: "Equal"
     value: "fargate"
     effect: "NoSchedule"
 
 affinity:
-  # EKS Pod反亲和性配置
+  # EKS Pod反亲和性配置，确保高可用性
   podAntiAffinity:
     preferredDuringSchedulingIgnoredDuringExecution:
     - weight: 100
@@ -88,9 +86,9 @@ container:
 
 # 初始化容器配置
 initContainers:
-  # AWS Secrets Manager就绪检查容器
-  - name: aws-secrets-check
-    image: amazon/aws-cli:latest
+  # Vault就绪检查容器
+  - name: vault-readiness-check
+    image: busybox:1.35
     command:
       - sh
       - -c
@@ -99,27 +97,27 @@ initContainers:
         MAX_RETRIES=30
         RETRY_INTERVAL=5
         
-        echo "开始检查AWS Secrets Manager访问权限..."
+        # 获取Vault地址
+        VAULT_ADDR="http://192.168.2.50:8200"
+        # 注意：在EKS环境中，Vault地址需要通过内部服务发现或公网可访问
+        echo "开始检查Vault服务状态: $VAULT_ADDR"
         
-        # 循环检查AWS Secrets Manager访问
+        # 循环检查Vault健康状态
         for i in $(seq 1 $MAX_RETRIES); do
-          echo "尝试 $i/$MAX_RETRIES 次: 检查AWS Secrets Manager访问..."
-          # 尝试访问AWS Secrets Manager
-          if aws secretsmanager list-secrets --max-items 1 >/dev/null 2>&1; then
-            echo "✓ AWS Secrets Manager访问正常!"
+          echo "尝试 $i/$MAX_RETRIES 次: 检查Vault连接..."
+          # 使用wget检查Vault健康端点
+          if wget -q --timeout=2 $VAULT_ADDR/v1/sys/health -O /dev/null; then
+            echo "✓ Vault服务可用!"
             exit 0
           fi
-          echo "AWS Secrets Manager暂时不可用，${RETRY_INTERVAL}秒后重试..."
+          echo "Vault暂时不可用，${RETRY_INTERVAL}秒后重试..."
           sleep $RETRY_INTERVAL
         done
         
         # 如果达到最大重试次数
-        echo "❌ 达到最大重试次数，AWS Secrets Manager访问受限!"
-        echo "注意: 应用将继续启动，但可能无法获取密钥配置"
+        echo "❌ 达到最大重试次数，Vault服务不可用!"
+        echo "注意: 应用将继续启动，但可能无法从Vault获取配置"
         exit 0  # 返回成功，让应用容器继续启动
-    env:
-      - name: AWS_REGION
-        value: "<aws-region>"  # EKS集群所在区域
 
 # 健康检查配置已注释，根据需求暂时禁用
 #livenessProbe:
@@ -147,30 +145,53 @@ env:
     value: "production"
   - name: PORT
     value: "3000"
-  - name: USE_AWS_SECRETS_MANAGER
-    value: "true"
   - name: USE_VAULT
-    value: "false"  # 在EKS中使用AWS Secrets Manager替代Vault
+    value: "true"
+  # EKS环境标识
+  - name: ENVIRONMENT
+    value: "eks"
   
-  # AWS配置
-  - name: AWS_REGION
-    value: "<aws-region>"  # EKS集群所在区域
-  
-  # AWS Secrets Manager配置
-  - name: AWS_SECRETS_PREFIX
-    value: "/cloudflare-app/"
-  - name: AWS_SECRETS_REGION
-    value: "<aws-region>"
-  - name: AWS_SECRETS_CLOUDFLARE_EMAIL
-    value: "/cloudflare-app/credentials/email"
-  - name: AWS_SECRETS_CLOUDFLARE_API_KEY
-    value: "/cloudflare-app/credentials/api-key"
-  
-  # 调试信息
+  # Vault连接配置
+  - name: VAULT_ADDR
+    value: "http://192.168.2.50:8200"  # Vault服务器地址（实际使用地址）
+  # Vault认证配置 - 在Kubernetes环境中必须使用kubernetes认证
+  - name: VAULT_AUTH_METHOD
+    value: "kubernetes"  # 强制使用kubernetes认证方式
+  - name: VAULT_K8S_ROLE
+    value: "cloudflare-app-role"  # Kubernetes认证时的角色
+  - name: VAULT_K8S_NAMESPACE
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.namespace
+  # 添加调试信息
   - name: DEBUG
     value: "true"
-  - name: AWS_SDK_LOAD_CONFIG
-    value: "true"  # 启用AWS SDK配置加载
+  - name: VAULT_DEBUG
+    value: "true"
+  - name: VAULT_LOG_LEVEL
+    value: "debug"
+  # 启用Vault权限错误时跳过认证，使用fallback配置
+  - name: VAULT_SKIP_ON_PERMISSION_ERROR
+    value: "true"
+  - name: NODE_TLS_REJECT_UNAUTHORIZED
+    value: "0"
+  # 添加Kubernetes认证所需的额外配置
+  - name: VAULT_K8S_MOUNT_PATH
+    value: "kubernetes"
+  - name: VAULT_K8S_TOKEN_PATH
+    value: "/var/run/secrets/kubernetes.io/serviceaccount/token"
+  # 增加重试配置
+  - name: VAULT_RETRY_ATTEMPTS
+    value: "5"
+  - name: VAULT_RETRY_INTERVAL_MS
+    value: "2000"
+  # Vault路径配置
+  - name: VAULT_DEFAULT_PATH
+    value: "secret/data/cloudflare"
+  - name: VAULT_MY_EMAIL_PATH
+    value: "secret/data/MY_CLOUDFLARE_EMAIL"
+  - name: VAULT_MY_API_KEY_PATH
+    value: "secret/data/MY_CLOUDFLARE_API_KEY"
   
   # Cloudflare配置 - 从secret中获取，同时提供fallback机制
   # 这些配置将作为备用，当Vault不可用时使用
@@ -195,14 +216,24 @@ env:
         key: session-secret
         optional: true
 
-# AWS Secrets Manager配置
-enableAWSSecretsManager: true
+# Vault Sidecar Injector 配置
+# 是否启用Vault Sidecar Injector
+enableVaultInjector: true
 
-# 是否使用文件系统凭证模式（通过AWS Secrets Manager CSI Driver）
+# 指定SecretProviderClass名称
+secretProviderClass: cloudflare-vault-provider
+
+# Vault服务器地址
+vaultAddress: "http://192.168.2.50:8200"
+
+# Vault Kubernetes认证角色
+vaultK8sRole: "cloudflare-app-role"
+
+# 是否使用文件系统凭证模式
 useFileSystemCredentials: true
 
 # 凭证目录路径
-awsCredentialDir: /apps/credential
+vaultCredentialDir: /apps/credential
 
 # 配置生命周期钩子，优雅关闭
 lifecycle:
@@ -215,7 +246,7 @@ terminationGracePeriodSeconds: 30
 
 # 服务配置
 service:
-  # 在EKS中使用LoadBalancer类型以利用AWS NLB/ALB
+  # 在EKS中使用LoadBalancer类型以利用AWS NLB
   type: LoadBalancer
   port: 80  # 服务暴露的端口
   targetPort: http  # 指向容器端口名称
@@ -234,8 +265,6 @@ ingress:
     alb.ingress.kubernetes.io/scheme: "internet-facing"
     alb.ingress.kubernetes.io/target-type: "ip"
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
-    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:<aws-region>:<aws-account-id>:certificate/<certificate-id>"  # ACM证书ARN
-    alb.ingress.kubernetes.io/ssl-redirect: "443"  # 重定向HTTP到HTTPS
     alb.ingress.kubernetes.io/healthcheck-path: "/health"
     alb.ingress.kubernetes.io/healthcheck-port: "3000"
     alb.ingress.kubernetes.io/success-codes: "200"
@@ -246,6 +275,4 @@ ingress:
         - path: /
           pathType: Prefix
   tls:
-    - secretName: cloudflare-app-tls
-      hosts:
-        - cloudflare-app.<your-domain>.com
+    []  # 可以根据需要添加TLS配置

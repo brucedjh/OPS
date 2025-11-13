@@ -8,6 +8,13 @@ metadata:
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
+  # EKS环境默认添加AWS相关注解
+  annotations:
+    # 确保服务可以正确与AWS负载均衡器集成
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+    {{- with .Values.service.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 spec:
   # 对于本地K8S环境，使用ClusterIP类型即可通过port-forward访问
   type: {{ .Values.service.type | default "ClusterIP" }}

@@ -29,10 +29,9 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      serviceAccountName: {{ default (include "example-app.fullname" .) .Values.serviceAccount.name }}
-      # EKS Pod Identity设置
+      serviceAccountName: {{ include "example-app.serviceAccountName" . }}
       securityContext:
-        fsGroup: 65534  # 用于AWS Secrets Manager CSI Driver
+        fsGroup: 65534  # 用于正确访问文件系统
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       # 添加初始化容器配置
       {{- with .Values.initContainers }}
@@ -66,27 +65,30 @@ spec:
             {{- end }}
           # 挂载服务账户令牌用于Vault认证
           volumeMounts:
-            {{- if .Values.enableAWSSecretsManager }}
-            - name: aws-secrets
-              mountPath: {{ .Values.awsCredentialDir | quote }}
-              readOnly: true
-            - name: aws-credentials
-              mountPath: /var/run/secrets/aws-credentials
-              readOnly: true
-            {{- end }}
+          {{- if .Values.enableVaultInjector }}
+          - name: vault-secrets
+            mountPath: {{ .Values.vaultCredentialDir | quote }}
+            readOnly: true
+          {{- end }}
+          # EKS临时卷挂载
+          - name: tmp
+            mountPath: /tmp
           # 生命周期钩子配置已移除，避免nil指针错误
       # 定义卷
       volumes:
-        {{- if .Values.enableAWSSecretsManager }}
-        - name: aws-secrets
-          csi:
-            driver: secrets-store.csi.k8s.io
-            readOnly: true
-            volumeAttributes:
-              secretProviderClass: "cloudflare-aws-provider"
-        - name: aws-credentials
+        - name: token-volume
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 7200
+                  audience: vault
+        - name: vault-secrets
           emptyDir: {}
-        {{- end }}
+        # EKS专用临时卷
+        - name: tmp
+          emptyDir: {}
+          medium: Memory
       
       {{- with .Values.nodeSelector }}
       nodeSelector:

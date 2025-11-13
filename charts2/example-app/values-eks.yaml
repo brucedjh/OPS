@@ -1,0 +1,138 @@
+# EKS环境专用配置文件
+# 使用方式: helm install -f values-eks.yaml
+
+# 副本数量配置
+replicaCount: 3
+
+# 自动伸缩配置
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80  # v1版本不支持
+
+# 服务账户配置 (保持与Vault兼容)
+serviceAccount:
+  create: true
+  name: "cloudflare-app-example-app"
+  annotations:
+    "vault.hashicorp.com/agent-inject": "false"
+    # 可选：添加IRSA注解用于AWS资源访问
+    # eks.amazonaws.com/role-arn: "arn:aws:iam::<aws-account-id>:role/eks-cloudflare-app-role"
+
+# 资源配置 - EKS环境推荐配置
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+# EKS节点选择器
+nodeSelector:
+  kubernetes.io/os: linux
+  kubernetes.io/arch: amd64
+  # 可选：指定实例类型
+  # node.kubernetes.io/instance-type: m5.large
+
+# EKS污点容忍
+tolerations:
+  - key: "eks.amazonaws.com/compute-type"
+    operator: "Equal"
+    value: "fargate"
+    effect: "NoSchedule"
+
+# EKS Pod反亲和性
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - example-app
+        topologyKey: "kubernetes.io/hostname"
+
+# 环境变量配置（保留Vault配置并添加EKS标识）
+env:
+  # 基本配置
+  - name: NODE_ENV
+    value: "production"
+  - name: PORT
+    value: "3000"
+  - name: USE_VAULT
+    value: "true"
+  # EKS环境标识
+  - name: ENVIRONMENT
+    value: "eks"
+  # AWS区域配置（如果需要）
+  - name: AWS_REGION
+    value: "<aws-region>"  # 替换为实际EKS集群区域
+  
+  # Vault连接配置（保持不变）
+  - name: VAULT_ADDR
+    value: "http://192.168.2.50:8200"  # 在EKS环境中，这应该是可访问的地址
+  - name: VAULT_AUTH_METHOD
+    value: "kubernetes"
+  - name: VAULT_K8S_ROLE
+    value: "cloudflare-app-role"
+  - name: VAULT_K8S_NAMESPACE
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.namespace
+  # 其他Vault配置保持不变...
+
+# Vault Sidecar配置（保持不变）
+enableVaultInjector: true
+secretProviderClass: cloudflare-vault-provider
+vaultAddress: "http://192.168.2.50:8200"
+vaultK8sRole: "cloudflare-app-role"
+useFileSystemCredentials: true
+vaultCredentialDir: /apps/credential
+
+# 服务配置 - EKS LoadBalancer
+service:
+  type: LoadBalancer
+  port: 80
+  targetPort: http
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+    service.beta.kubernetes.io/aws-load-balancer-internal: "false"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+
+# Ingress配置 - AWS ALB
+ingress:
+  enabled: true
+  className: "alb"
+  annotations:
+    alb.ingress.kubernetes.io/scheme: "internet-facing"
+    alb.ingress.kubernetes.io/target-type: "ip"
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/healthcheck-path: "/health"
+    alb.ingress.kubernetes.io/healthcheck-port: "3000"
+    alb.ingress.kubernetes.io/success-codes: "200"
+    alb.ingress.kubernetes.io/load-balancer-name: "cloudflare-app-alb"
+    # 可选：SSL证书配置
+    # alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:<aws-region>:<aws-account-id>:certificate/<certificate-id>"
+    # alb.ingress.kubernetes.io/ssl-redirect: "443"
+  hosts:
+    - host: cloudflare-app.<your-domain>.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    []
+
+# 注意事项：
+# 1. 在EKS环境中部署前，请确保Vault服务可从集群内部访问
+# 2. 确认Vault已正确配置了Kubernetes认证，并授权了此服务账户
+# 3. 如需使用AWS资源（如S3、Secrets Manager等），请配置适当的IAM角色
+# 4. 替换所有<aws-account-id>、<aws-region>和<your-domain>占位符
+# 5. 资源请求和限制可根据实际需求调整
