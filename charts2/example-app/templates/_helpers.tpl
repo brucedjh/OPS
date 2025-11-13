@@ -50,4 +50,9 @@ app.kubernetes.io/name: {{ include "example-app.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
-# 服务账户名称直接在serviceaccount.yaml中定义，不再使用此模板
+{{/*
+Service Account Name
+*/}}
+{{- define "example-app.serviceAccountName" -}}
+{{- default (include "example-app.fullname" .) .Values.serviceAccount.name -}}
+{{- end -}}
