@@ -1,0 +1,13 @@
+# Test file to identify YAML syntax errors
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - "example-app"
+        topologyKey: "kubernetes.io/hostname"

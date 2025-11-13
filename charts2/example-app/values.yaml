@@ -1,6 +1,7 @@
 # Default values for example-app.
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
+# 最近更新时间: 2024-07-13
 
 replicaCount: 3
 
@@ -77,7 +78,7 @@ affinity:
           - key: app.kubernetes.io/name
             operator: In
             values:
-            - {{ include "example-app.name" . | quote }}
+            - example-app
         topologyKey: "kubernetes.io/hostname"
 
 # 容器配置
