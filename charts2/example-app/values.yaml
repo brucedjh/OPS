@@ -271,7 +271,7 @@ ingress:
     alb.ingress.kubernetes.io/success-codes: "200"
     alb.ingress.kubernetes.io/load-balancer-name: "cloudflare-app-alb"
   hosts:
-    - host: cloudflare-app.<your-domain>.com
+    - host: cloudflare-app.example.com
       paths:
         - path: /
           pathType: Prefix
