@@ -1,0 +1,251 @@
+# Default values for example-app.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 3
+
+image:
+  repository: <aws-account-id>.dkr.ecr.<aws-region>.amazonaws.com/cloudflare-app
+  tag: "latest"  # 会被GitHub Actions传入的实际tag替换
+  pullPolicy: Always
+
+imagePullSecrets:
+  - name: aws-ecr-credentials  # EKS中用于访问ECR的secret名称
+
+nameOverride: ""
+fullnameOverride: ""
+
+podAnnotations:
+  {}  # 可以添加自定义注解
+
+serviceAccount:
+  # 是否自动创建serviceAccount
+  create: true
+  # 指定serviceAccount名称
+  name: "cloudflare-app-example-app"
+  # 添加IAM角色注解用于IRSA集成
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::<aws-account-id>:role/eks-cloudflare-app-role"  # EKS IAM角色ARN
+
+podSecurityContext:
+  fsGroup: 2000
+
+securityContext:
+  {}  # 可以添加安全上下文配置
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+nodeSelector:
+  # EKS节点标签选择器
+  kubernetes.io/os: linux
+  kubernetes.io/arch: amd64
+  # 可选：使用EC2实例类型标签
+  # node.kubernetes.io/instance-type: m5.large
+
+tolerations:
+  # EKS专用污点容忍
+  - key: "kubernetes.azure.com/scalesetpriority"
+    operator: "Equal"
+    value: "spot"
+    effect: "NoSchedule"
+  - key: "eks.amazonaws.com/compute-type"
+    operator: "Equal"
+    value: "fargate"
+    effect: "NoSchedule"
+
+affinity:
+  # EKS Pod反亲和性配置
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - {{ include "example-app.name" . | quote }}
+        topologyKey: "kubernetes.io/hostname"
+
+# 容器配置
+container:
+  port: 3000  # 容器内部实际监听的端口
+
+# 初始化容器配置
+initContainers:
+  # AWS Secrets Manager就绪检查容器
+  - name: aws-secrets-check
+    image: amazon/aws-cli:latest
+    command:
+      - sh
+      - -c
+      - |
+        # 设置重试参数
+        MAX_RETRIES=30
+        RETRY_INTERVAL=5
+        
+        echo "开始检查AWS Secrets Manager访问权限..."
+        
+        # 循环检查AWS Secrets Manager访问
+        for i in $(seq 1 $MAX_RETRIES); do
+          echo "尝试 $i/$MAX_RETRIES 次: 检查AWS Secrets Manager访问..."
+          # 尝试访问AWS Secrets Manager
+          if aws secretsmanager list-secrets --max-items 1 >/dev/null 2>&1; then
+            echo "✓ AWS Secrets Manager访问正常!"
+            exit 0
+          fi
+          echo "AWS Secrets Manager暂时不可用，${RETRY_INTERVAL}秒后重试..."
+          sleep $RETRY_INTERVAL
+        done
+        
+        # 如果达到最大重试次数
+        echo "❌ 达到最大重试次数，AWS Secrets Manager访问受限!"
+        echo "注意: 应用将继续启动，但可能无法获取密钥配置"
+        exit 0  # 返回成功，让应用容器继续启动
+    env:
+      - name: AWS_REGION
+        value: "<aws-region>"  # EKS集群所在区域
+
+# 健康检查配置已注释，根据需求暂时禁用
+#livenessProbe:
+#  httpGet:
+#    path: /health
+#    port: 3000
+#  initialDelaySeconds: 120  # 进一步增加初始延迟，给Vault认证更多时间
+#  periodSeconds: 20        # 降低检查频率，减少资源消耗
+#  timeoutSeconds: 10       # 设置更长的超时时间
+#  failureThreshold: 5      # 增加失败阈值，避免因临时问题导致重启
+
+#readinessProbe:
+#  httpGet:
+#    path: /health
+#    port: 3000
+#  initialDelaySeconds: 30   # 就绪探针也增加延迟
+#  periodSeconds: 10
+#  timeoutSeconds: 5
+#  failureThreshold: 3
+
+# 环境变量配置
+env:
+  # 基本配置
+  - name: NODE_ENV
+    value: "production"
+  - name: PORT
+    value: "3000"
+  - name: USE_AWS_SECRETS_MANAGER
+    value: "true"
+  - name: USE_VAULT
+    value: "false"  # 在EKS中使用AWS Secrets Manager替代Vault
+  
+  # AWS配置
+  - name: AWS_REGION
+    value: "<aws-region>"  # EKS集群所在区域
+  
+  # AWS Secrets Manager配置
+  - name: AWS_SECRETS_PREFIX
+    value: "/cloudflare-app/"
+  - name: AWS_SECRETS_REGION
+    value: "<aws-region>"
+  - name: AWS_SECRETS_CLOUDFLARE_EMAIL
+    value: "/cloudflare-app/credentials/email"
+  - name: AWS_SECRETS_CLOUDFLARE_API_KEY
+    value: "/cloudflare-app/credentials/api-key"
+  
+  # 调试信息
+  - name: DEBUG
+    value: "true"
+  - name: AWS_SDK_LOAD_CONFIG
+    value: "true"  # 启用AWS SDK配置加载
+  
+  # Cloudflare配置 - 从secret中获取，同时提供fallback机制
+  # 这些配置将作为备用，当Vault不可用时使用
+  - name: CLOUDFLARE_EMAIL
+    valueFrom:
+      secretKeyRef:
+        name: cloudflare-app-secrets
+        key: cloudflare-email
+        optional: true
+  - name: CLOUDFLARE_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: cloudflare-app-secrets
+        key: cloudflare-api-key
+        optional: true
+  
+  # 会话配置
+  - name: SESSION_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: cloudflare-app-secrets
+        key: session-secret
+        optional: true
+
+# AWS Secrets Manager配置
+enableAWSSecretsManager: true
+
+# 是否使用文件系统凭证模式（通过AWS Secrets Manager CSI Driver）
+useFileSystemCredentials: true
+
+# 凭证目录路径
+awsCredentialDir: /apps/credential
+
+# 配置生命周期钩子，优雅关闭
+lifecycle:
+  preStop:
+    exec:
+      command: ["sh", "-c", "sleep 10"]  # 给应用10秒的优雅关闭时间
+
+# 配置Pod行为
+terminationGracePeriodSeconds: 30
+
+# 服务配置
+service:
+  # 在EKS中使用LoadBalancer类型以利用AWS NLB/ALB
+  type: LoadBalancer
+  port: 80  # 服务暴露的端口
+  targetPort: http  # 指向容器端口名称
+  # AWS负载均衡器注解
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"  # 使用网络负载均衡器
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"  # 面向互联网
+    service.beta.kubernetes.io/aws-load-balancer-internal: "false"  # 公开负载均衡器
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"  # 启用跨区域负载均衡
+
+ingress:
+  enabled: true
+  className: "alb"  # AWS ALB Ingress Controller
+  annotations:
+    # AWS ALB注解
+    alb.ingress.kubernetes.io/scheme: "internet-facing"
+    alb.ingress.kubernetes.io/target-type: "ip"
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:<aws-region>:<aws-account-id>:certificate/<certificate-id>"  # ACM证书ARN
+    alb.ingress.kubernetes.io/ssl-redirect: "443"  # 重定向HTTP到HTTPS
+    alb.ingress.kubernetes.io/healthcheck-path: "/health"
+    alb.ingress.kubernetes.io/healthcheck-port: "3000"
+    alb.ingress.kubernetes.io/success-codes: "200"
+    alb.ingress.kubernetes.io/load-balancer-name: "cloudflare-app-alb"
+  hosts:
+    - host: cloudflare-app.<your-domain>.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: cloudflare-app-tls
+      hosts:
+        - cloudflare-app.<your-domain>.com

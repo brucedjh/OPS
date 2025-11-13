@@ -1,0 +1,95 @@
+# 生产环境特定配置
+
+replicaCount: 3
+
+image:
+  repository: crpi-dndp9yqzsi910o27.cn-hongkong.personal.cr.aliyuncs.com/ns_jadebruce/cloudflare
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+service:
+  type: NodePort
+  # 在生产环境中设置NodePort
+  nodePort: 30080
+  # 启用会话亲和性以保持用户会话一致性
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800
+  # 使用Local策略保留客户端源IP
+  externalTrafficPolicy: Local
+  # 添加监控和服务网格相关注解
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "80"
+    prometheus.io/path: "/metrics"
+    # 如果使用Istio服务网格
+    # traffic.sidecar.istio.io/excludeOutboundPorts: "9090,9100"
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  hosts:
+    - host: example-app.yourdomain.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: example-app-tls
+      hosts:
+        - example-app.yourdomain.com
+
+nodeSelector:
+  environment: production
+
+# 覆盖环境变量配置，生产环境禁用debug模式
+env:
+  - name: DEBUG
+    value: "false"
+  - name: VAULT_DEBUG
+    value: "false"
+  - name: VAULT_LOG_LEVEL
+    value: "info"
+  # 启用Vault权限错误时跳过认证，使用fallback配置
+  - name: VAULT_SKIP_ON_PERMISSION_ERROR
+    value: "true"
+
+# Vault Sidecar Injector 配置 - 生产环境
+enableVaultInjector: true
+secretProviderClass: cloudflare-vault-provider
+useFileSystemCredentials: true
+vaultCredentialDir: /apps/credential
+
+# 明确禁用健康检查配置
+livenessProbe: {}
+readinessProbe: {}
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - example-app
+          topologyKey: "kubernetes.io/hostname"

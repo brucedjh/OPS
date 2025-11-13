@@ -1,0 +1,102 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "example-app.fullname" . }}
+  labels:
+    {{- include "example-app.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "example-app.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # 启用Vault CSI Secret Store注入
+      annotations:
+        secrets-store.csi.k8s.io/enabled: "{{ .Values.enableVaultInjector | default "true" }}"
+        # 指定使用哪个SecretProviderClass
+        secrets-store.csi.k8s.io/secret-provider-class: "{{ .Values.secretProviderClass | default "cloudflare-vault-provider" }}"
+      labels:
+        {{- include "example-app.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ default (include "example-app.fullname" .) .Values.serviceAccount.name }}
+      # EKS Pod Identity设置
+      securityContext:
+        fsGroup: 65534  # 用于AWS Secrets Manager CSI Driver
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      # 添加初始化容器配置
+      {{- with .Values.initContainers }}
+      initContainers:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.container.port }}
+              protocol: TCP
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          env:
+            # 添加文件系统凭证模式支持
+            - name: USE_FILESYSTEM_CREDENTIALS
+              value: {{ .Values.useFileSystemCredentials | default "true" | quote }}
+            - name: VAULT_CREDENTIAL_DIR
+              value: {{ .Values.vaultCredentialDir | default "/apps/credential" | quote }}
+            {{- with .Values.env }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          # 挂载服务账户令牌用于Vault认证
+          volumeMounts:
+            {{- if .Values.enableAWSSecretsManager }}
+            - name: aws-secrets
+              mountPath: {{ .Values.awsCredentialDir | quote }}
+              readOnly: true
+            - name: aws-credentials
+              mountPath: /var/run/secrets/aws-credentials
+              readOnly: true
+            {{- end }}
+          # 生命周期钩子配置已移除，避免nil指针错误
+      # 定义卷
+      volumes:
+        {{- if .Values.enableAWSSecretsManager }}
+        - name: aws-secrets
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: "cloudflare-aws-provider"
+        - name: aws-credentials
+          emptyDir: {}
+        {{- end }}
+      
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
